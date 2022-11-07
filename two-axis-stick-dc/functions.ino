@@ -99,17 +99,17 @@ void angle_calc() {
   AcY = Wire.read() << 8 | Wire.read(); // 0x3D (ACCEL_YOUT_H) & 0x3E (ACCEL_YOUT_L)
   AcZ = Wire.read() << 8 | Wire.read(); // 0x3F (ACCEL_ZOUT_H) & 0x40 (ACCEL_ZOUT_L)
 
-  AcX -= AcX_offset;
-  AcY -= AcY_offset;  
-  AcZ -= AcZ_offset;
+  AcXc = AcX - offsets.X;
+  AcYc = AcY - offsets.Y;  
+  AcZc = AcZ - offsets.Z;
   GyZ -= GyZ_offset;
   GyY -= GyY_offset;
 
   robot_angleX += GyZ * loop_time / 1000 / 65.536;
-  Acc_angleX = atan2(AcY, -AcX) * 57.2958;        // angle from acc. values  * 57.2958 (deg/rad)
+  Acc_angleX = atan2(AcYc, -AcXc) * 57.2958;        // angle from acc. values  * 57.2958 (deg/rad)
   robot_angleX = robot_angleX * Gyro_amount + Acc_angleX * (1.0 - Gyro_amount);
   robot_angleY += GyY * loop_time / 1000 / 65.536; 
-  Acc_angleY = -atan2(AcZ, -AcX) * 57.2958;       //angle from acc. values  * 57.2958 (deg/rad)
+  Acc_angleY = -atan2(AcZc, -AcXc) * 57.2958;       //angle from acc. values  * 57.2958 (deg/rad)
   robot_angleY = robot_angleY * Gyro_amount + Acc_angleY * (1.0 - Gyro_amount);
   //check if robot is vertical
   if (abs(robot_angleX) > 6 || abs(robot_angleY) > 6) vertical = false;
@@ -118,7 +118,7 @@ void angle_calc() {
 
 void battVoltage(double voltage) {
   //Serial.print("batt: "); Serial.println(voltage); //debug
-  if (voltage > 8 && voltage <= 9.5) {
+  if ((voltage > 5.5 && voltage < 6.4) || (voltage > 8.8 && voltage < 9.5)) {   // 2S and 3S
     digitalWrite(BUZZER, HIGH);
   } else {
     digitalWrite(BUZZER, LOW);
@@ -175,7 +175,38 @@ int Tuning() {
       if (cmd == '+')    K4Gain += 0.005;
       if (cmd == '-')    K4Gain -= 0.005;
       printValues();
-      break;  
+      break;
+    case 'c':
+      if (cmd == '+' && !calibrating) {
+        calibrating = true;
+         Serial.println("calibrating on");
+      }
+      if (cmd == '-' && calibrating)  {
+        Serial.println("calibrating off");
+        Serial.print("X: "); Serial.print(AcX + 16384); Serial.print(" Y: "); Serial.print(AcY);  Serial.print(" Z: "); Serial.println(AcZ);
+        if (abs(AcZ) < 5000 && abs(AcY) < 5000) {
+		      offsets.ID = 77;
+          offsets.X = AcX + 16384;
+          offsets.Y = AcY;
+          offsets.Z = AcZ;
+          digitalWrite(BUZZER, HIGH);
+          delay(70);
+          digitalWrite(BUZZER, LOW);
+          EEPROM.put(0, offsets);
+		      calibrating = false;
+		      calibrated = true;
+        } else {
+          Serial.println("The angles are wrong!!!");
+          digitalWrite(BUZZER, HIGH);
+          delay(50);
+          digitalWrite(BUZZER, LOW);
+          delay(70);
+          digitalWrite(BUZZER, HIGH);
+          delay(50);
+          digitalWrite(BUZZER, LOW);
+        }
+      }
+      break;          
   }
 }
 

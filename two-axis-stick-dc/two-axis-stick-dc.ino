@@ -1,4 +1,5 @@
 #include <Wire.h>
+#include <EEPROM.h>
 
 #define MPU6050       0x68    // Device address
 #define ACCEL_CONFIG  0x1C    // Accelerometer configuration address
@@ -36,7 +37,7 @@ int32_t motor_speed_X, motor_speed_Y;
 float motor_speed_enc_X, motor_speed_enc_Y; 
 uint32_t timer;
 long currentT, previousT_1, previousT_2 = 0; 
-int16_t AcX, AcY, AcZ, GyY, GyZ, gyroY, gyroZ;
+int16_t AcX, AcY, AcZ, AcXc, AcYc, AcZc, GyY, GyZ, gyroY, gyroZ;
 
 float angle_prev_X = 0.0f;        // result of last call to getSensorAngle(), used for full rotations and velocity
 float velocity_X = 0.0f;
@@ -57,10 +58,15 @@ int32_t vel_full_rotations_Y = 0; // previous full rotation value for velocity c
 int max_raw_count = 1; 
 int min_raw_count = 1023;
 
+struct AccOffsetsObj {
+  int ID;
+  int16_t X;
+  int16_t Y;
+  int16_t Z;
+};
+
 //IMU offset values
-int16_t  AcX_offset = 1520;
-int16_t  AcY_offset = -400;
-int16_t  AcZ_offset = 2100;
+AccOffsetsObj offsets;
 int16_t  GyZ_offset = 0;
 int32_t  GyZ_offset_sum = 0;
 int16_t  GyY_offset = 0;
@@ -73,6 +79,8 @@ float robot_angleX, robot_angleY;
 float Acc_angleX, Acc_angleY;
 
 bool vertical = false;      // is the robot vertical
+bool calibrating = false;
+bool calibrated = false;
 
 uint8_t i2cData[14]; // Buffer for I2C data
 
@@ -85,6 +93,9 @@ void setup() {
   digitalWrite(BUZZER, LOW);
   pinMode(BUZZER, OUTPUT);
   delay(2000);
+  EEPROM.get(0, offsets);
+  if (offsets.ID == 77) calibrated = true;
+    else calibrated = false;
   digitalWrite(BUZZER, HIGH);
   delay(70);
   digitalWrite(BUZZER, LOW);
@@ -96,7 +107,7 @@ void loop() {
   if (currentT - previousT_1 >= loop_time) {
     Tuning(); 
     angle_calc();
-    if (vertical) {
+    if (vertical && calibrated) {
       gyroZ = GyZ / 131.0; // Convert to deg/s
       gyroY = GyY / 131.0; // Convert to deg/s
       gyroYfilt = alpha * gyroY + (1 - alpha) * gyroYfilt;
@@ -105,10 +116,15 @@ void loop() {
       pwmY = constrain(K1Gain * robot_angleY + K2Gain * gyroYfilt + K3Gain * motor_speed_enc_Y + K4Gain * motor_speed_Y, -255, 255);
       motor_speed_enc_X = -getVelocity_X();
       motor_speed_enc_Y = getVelocity_Y();
-      MotorX_control(pwmX);
-      MotorY_control(pwmY);
-      motor_speed_X += motor_speed_enc_X;
-      motor_speed_Y += motor_speed_enc_Y;
+      if (!calibrating) {
+        MotorX_control(pwmX);
+        MotorY_control(pwmY);
+        motor_speed_X += motor_speed_enc_X;
+        motor_speed_Y += motor_speed_enc_Y;
+      } else {
+        MotorX_control(0);
+        MotorY_control(0);
+      }
     } else {
       MotorX_control(0);
       MotorY_control(0);
@@ -117,8 +133,11 @@ void loop() {
     }
     previousT_1 = currentT;
   }
-  if (currentT - previousT_2 >= 1000) {
+  if (currentT - previousT_2 >= 2000) {
     battVoltage((double)analogRead(VBAT) / 74); 
+	if (!calibrated && !calibrating) {
+      Serial.println("first you need to calibrate the balancing point...");
+    }
     previousT_2 = currentT;
   }
 }
